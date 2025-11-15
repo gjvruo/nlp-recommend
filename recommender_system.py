@@ -11,6 +11,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.model_selection import train_test_split
 from sklearn.svm import SVC
 import joblib  # 用于加载/保存模型
+from snownlp import SnowNLP
 
 
 # ==============================================================================
@@ -50,9 +51,8 @@ def jieba_tokenizer(text):
 
 
 # ==============================================================================
-# 模块二：模型训练与加载 ( <<< 变化点 1: 新增一个函数用于训练和保存模型)
+# 模块二：模型训练与加载
 # ==============================================================================
-# 我们只在需要时训练一次模型，然后保存它。App运行时直接加载，速度会快很多。
 
 def train_and_save_model(data_file="data/smalldata_ws.csv", model_path="model/svm_model.pkl",
                          vectorizer_path="model/tfidf_vectorizer.pkl"):
@@ -62,13 +62,44 @@ def train_and_save_model(data_file="data/smalldata_ws.csv", model_path="model/sv
     df.rename(columns={'feedback': 'comment_text'}, inplace=True)
     df['cleaned_text'] = df['comment_text'].apply(clean_comment_text)
 
-    # 简单的标签（实际项目中这里可以用SnowNLP或人工标注）
-    df['sentiment_label'] = df['cleaned_text'].apply(lambda x: 'positive' if len(x) > 10 else 'negative')
+
+    # 在应用 SnowNLP 之前，先过滤掉空字符串，防止 ZeroDivisionError
+    df_valid_text = df[df['cleaned_text'].astype(bool)].copy()
+
+    if df_valid_text.empty:
+        raise ValueError("数据清洗后，没有可用于情感分析的有效文本。")
+
+    print("应用 SnowNLP 进行自动情感标注...")
+
+    # SnowNLP.sentiments 返回 0-1 之间的分数，越接近 1 越积极。
+    # 我们对过滤后的有效数据应用 SnowNLP
+    df_valid_text['sentiment_score'] = df_valid_text['cleaned_text'].apply(lambda x: SnowNLP(x).sentiments)
+
+    # 将结果重新合并回原始 DataFrame (可选，也可以只用 df_valid_text)
+    # 简单起见，我们直接使用 df_valid_text
+    df = df_valid_text
+
+    def score_to_label(score):
+        if score > 0.6:
+            return 'positive'
+        elif score < 0.4:
+            return 'negative'
+        else:
+            return 'neutral'
+
+    df['sentiment_label'] = df['sentiment_score'].apply(score_to_label)
+
+    # 过滤掉标签为 'neutral' 的数据，因为我们的 SVM 模型是二分类 (positive/negative)
+    df_filtered = df[df['sentiment_label'].isin(['positive', 'negative'])].copy()
+
+
+    if df_filtered.empty:
+        raise ValueError("SnowNLP标注后，用于训练的 positive/negative 样本为空，请检查数据。")
 
     stopwords_set = load_stopwords()
     vectorizer = TfidfVectorizer(tokenizer=jieba_tokenizer, max_features=5000, stop_words=list(stopwords_set))
-    X = vectorizer.fit_transform(df['cleaned_text'])
-    y = df['sentiment_label']
+    X = vectorizer.fit_transform(df_filtered['cleaned_text'])  # 使用过滤后的数据训练
+    y = df_filtered['sentiment_label']
 
     X_train, _, y_train, _ = train_test_split(X, y, test_size=0.2, random_state=42)
     svm_classifier = SVC(kernel='linear', random_state=42)
@@ -82,14 +113,11 @@ def train_and_save_model(data_file="data/smalldata_ws.csv", model_path="model/sv
 
 
 # ==============================================================================
-# 模块三：核心推荐流程 ( <<< 变化点 2: 这就是app.py需要的函数！)
+# 模块三：核心推荐流程
 # ==============================================================================
 
-# recommender_system.py
 
-# ... (文件顶部的其他import和函数保持不变) ...
-
-def run_pipeline(df_reviews, strategy, model_path="model/svm_model.pkl", vectorizer_path="model/tfidf_vectorizer.pkl"):
+def run_pipeline(df_reviews, strategy, top_k=10, model_path="model/svm_model.pkl", vectorizer_path="model/tfidf_vectorizer.pkl"):
     """
     接收DataFrame和策略，返回推荐结果。
     这是整个系统的核心可调用函数。
@@ -105,9 +133,6 @@ def run_pipeline(df_reviews, strategy, model_path="model/svm_model.pkl", vectori
     svm_classifier = joblib.load(model_path)
     vectorizer = joblib.load(vectorizer_path)
 
-    # =========================================================================
-    # |           ↓↓↓ 核心修复在这里 ↓↓↓                                    |
-    # =========================================================================
 
     # --- 步骤 3: 预处理上传的数据 ---
     print("[流程 2/5] 预处理上传的数据...")
@@ -125,9 +150,6 @@ def run_pipeline(df_reviews, strategy, model_path="model/svm_model.pkl", vectori
 
     df_reviews['cleaned_text'] = df_reviews['comment_text'].apply(clean_comment_text)
 
-    # =========================================================================
-    # |           ↑↑↑ 核心修复完毕 ↑↑↑                                      |
-    # =========================================================================
 
     # --- 步骤 4: 应用模型进行情感预测 ---
     print("[流程 3/5] 应用模型进行情感预测...")
@@ -151,28 +173,21 @@ def run_pipeline(df_reviews, strategy, model_path="model/svm_model.pkl", vectori
     product_profile_df['negative_ratio'] = product_profile_df['negative'] / product_profile_df['review_count']
 
     # --- 步骤 6: 根据策略执行推荐 ---
-    # recommender_system.py -> run_pipeline 函数内
 
-    # ... (前面的代码，直到“构建商品情感画像”结束) ...
 
     print(f"[流程 5/5] 执行推荐策略: {strategy}")
 
-    # =========================================================================
-    # |           ↓↓↓ 终极稳定版修复在这里 ↓↓↓                            |
-    # =========================================================================
 
     # 先定义一个空的DataFrame，以防万一
     recommendations = pd.DataFrame()
 
     if strategy == '基线策略 (仅热度)':
-        # 先排序，再把索引变回列
-        recommendations = product_profile_df.sort_values(by='review_count', ascending=False).reset_index()
+        recommendations = product_profile_df.sort_values(by='review_count', ascending=False)
 
     elif strategy == '情感过滤+热度':
         filtered = product_profile_df[
             (product_profile_df['positive_ratio'] > 0.7) & (product_profile_df['negative_ratio'] < 0.1)]
-        # 对过滤后的结果排序，再把索引变回列
-        recommendations = filtered.sort_values(by='review_count', ascending=False).reset_index()
+        recommendations = filtered.sort_values(by='review_count', ascending=False)
 
     elif strategy == '加权综合分':
         p_df_norm = product_profile_df.copy()
@@ -184,32 +199,24 @@ def run_pipeline(df_reviews, strategy, model_path="model/svm_model.pkl", vectori
 
         p_df_norm['score'] = 0.4 * p_df_norm['norm_review_count'] + 0.4 * p_df_norm['positive_ratio'] - 0.2 * p_df_norm[
             'negative_ratio']
-        # 排序后，再把索引变回列
-        recommendations = p_df_norm.sort_values(by='score', ascending=False).reset_index()
+        recommendations = p_df_norm.sort_values(by='score', ascending=False)
 
     elif strategy == '口碑优先':
-        # 这是最关键的策略，我们确保它正确
-        # 先排序，再把索引变回列
         recommendations = product_profile_df.sort_values(by=['positive_ratio', 'review_count'],
-                                                         ascending=[False, False]).reset_index()
+                                                         ascending=[False, False])
 
     # 检查一下我们是否真的得到了结果
+    # 如果 recommendations 还是空的，或者经过排序后变空了
     if recommendations.empty:
         print("警告：在执行排序后，推荐列表为空！")
-        return pd.DataFrame()  # 明确返回一个空的DataFrame
+        return pd.DataFrame()  # 明确返回一个空的DataFrame，避免后续错误
 
-    print("推荐列表生成成功，返回前10条。")
-    return recommendations.head(10)
+    recommendations = recommendations.reset_index()
 
-    # =========================================================================
-    # |           ↑↑↑ 终极稳定版修复完毕 ↑↑↑                                |
-    # =========================================================================
+    print("推荐列表生成成功，返回前 K 条。")
+    return recommendations.head(top_k), df_reviews
 
 
-
-# ==============================================================================
-# ( <<< 变化点 3: 保留这个部分，用于独立测试或首次训练模型)
-# ==============================================================================
 if __name__ == "__main__":
     # 首次运行时，取消下面这行代码的注释来训练并保存模型
     train_and_save_model()
