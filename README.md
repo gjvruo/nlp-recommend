@@ -43,9 +43,13 @@
 - 项目管理: Git, GitHub
   
 ## 界面展示
-<img width="1877" height="814" alt="image" src="https://github.com/user-attachments/assets/67015d3b-b191-4541-9444-a512f4c139ba" />
-<img width="1825" height="794" alt="image" src="https://github.com/user-attachments/assets/065b3163-25eb-4e9b-bba8-abb253c94b8f" />
-<img width="1828" height="770" alt="image" src="https://github.com/user-attachments/assets/3b333282-c6e8-457a-b7bc-72d48b1fe17c" />
+<img width="1818" height="794" alt="image" src="https://github.com/user-attachments/assets/ca37a432-a65f-42bd-9408-1069878fd6a6" />
+<img width="1812" height="793" alt="image" src="https://github.com/user-attachments/assets/665d74ab-3f57-448d-b49d-cd52d7983897" />
+<img width="1835" height="806" alt="image" src="https://github.com/user-attachments/assets/b9f33906-8467-4013-adc2-54149f5d8e02" />
+<img width="1791" height="800" alt="image" src="https://github.com/user-attachments/assets/3ce07f9c-b160-43e2-a4c4-f02ce9cf750d" />
+
+
+
 
 
 
