@@ -1,9 +1,86 @@
+# app.py
+# app.py
 
-# app.py (修改后)
+# ==============================================================================
+# 核心库导入
+# ==============================================================================
 import streamlit as st
 import pandas as pd
-# <<< 核心修复：同时导入 run_pipeline 和 jieba_tokenizer >>>
-from recommender_system import run_pipeline, jieba_tokenizer
+import matplotlib.pyplot as plt
+from wordcloud import WordCloud
+import numpy as np
+import jieba
+import os
+
+
+from recommender_system import run_pipeline, load_stopwords, clean_comment_text, jieba_tokenizer
+# ==============================================================================
+# 辅助函数 (用于UI)
+# ==============================================================================
+
+
+# 使用 @st.cache_data 缓存函数结果，避免重复计算，提升性能
+@st.cache_data
+def create_sentiment_pie_chart(df):
+    # 确保列名正确
+    if 'predicted_sentiment' not in df.columns:
+        st.error("无法创建饼图：DataFrame中缺少 'predicted_sentiment' 列。")
+        return plt.figure()
+
+    sentiment_counts = df['predicted_sentiment'].value_counts()
+    fig, ax = plt.subplots()
+    ax.pie(sentiment_counts, labels=sentiment_counts.index, autopct='%1.1f%%', startangle=90,
+           colors=['#66b3ff', '#ff9999', '#99ff99'])
+    ax.axis('equal')
+    return fig
+
+
+
+@st.cache_data
+def create_word_cloud(df):
+    # 将所有评论文本合并成一个大字符串
+    text = " ".join(review for review in df.cleaned_text)
+    stopwords = load_stopwords("data/stopwords.txt")  # 加载停用词
+
+    FONT_PATH = "data/ShanHaiJiGuSongKe-JianFan-2.ttf"
+
+    # 创建词云对象，注意需要指定中文字体路径
+    try:
+        # 严格检查字体文件是否存在
+        if not os.path.exists(FONT_PATH):
+            raise FileNotFoundError(f"指定的词云字体文件 '{FONT_PATH}' 不存在。请替换为您自己的字体路径。")
+
+        wordcloud = WordCloud(
+            font_path=FONT_PATH,
+            width=800,
+            height=400,
+            background_color='white',
+            stopwords=stopwords
+
+        ).generate(" ".join(jieba.cut(text)))
+
+        fig, ax = plt.subplots()
+        ax.imshow(wordcloud, interpolation='bilinear')
+        ax.axis('off')
+        return fig
+    except FileNotFoundError as e:
+        st.warning(str(e))
+        return None
+    except Exception as e:
+        st.error(f"生成词云时发生其他错误: {e}")
+        return None
+
+
+
+@st.cache_data
+def convert_df_to_csv(df):
+    return df.to_csv(index=False).encode('utf-8-sig')
+
+
+# ==============================================================================
+# Streamlit 主界面
+# ==============================================================================
+
 
 # --- 页面配置 ---
 st.set_page_config(
@@ -14,113 +91,86 @@ st.set_page_config(
 
 # --- 主标题 ---
 st.title("🛒 基于NLP的用户评论情感分析与商品推荐系统")
-st.write("上传您的天猫评论数据，选择一个推荐策略，系统将为您生成Top-10商品推荐列表。")
+st.write("上传您的天猫评论数据，选择一个推荐策略，系统将为您生成商品推荐列表。")
 
 # --- 侧边栏 ---
 with st.sidebar:
-    st.header("控制面板")
-    # 1. 文件上传组件
+    st.header("⚙️ 控制面板")
+
     uploaded_file = st.file_uploader(
         "请上传您的评论数据 (CSV格式)",
         type=['csv']
     )
 
-    # 2. 策略选择下拉菜单
     strategy = st.selectbox(
         "请选择推荐策略",
-        (
-            '基线策略 (仅热度)',
-            '情感过滤+热度',
-            '加权综合分',
-            '口碑优先'
-        ),
-        index=3  # 默认选择'口碑优先'
+        ('口碑优先', '加权综合分', '情感过滤+热度', '基线策略 (仅热度)')
     )
 
-    # 3. 执行按钮
+    top_k = st.slider("选择推荐结果的数量 (Top K)", min_value=5, max_value=20, value=10, step=1)
+
     run_button = st.button("🚀 开始分析与推荐")
 
+
 # --- 主内容区 ---
-# app.py
+if uploaded_file is not None:
+    # 只要上传了文件，就先读取并缓存
+    df_reviews = pd.read_csv(uploaded_file)
 
-# 只有当文件被上传并且按钮被点击后，才执行核心逻辑
-if uploaded_file is not None and run_button:
-    # 读取上传的CSV文件为DataFrame
-    try:
-        df_reviews = pd.read_csv(uploaded_file)
-        st.info(f"✅ 文件上传成功，包含 {len(df_reviews)} 条评论。")
-        st.info(f"您选择的策略是： **{strategy}**")
+    st.info(f"✅ 文件上传成功，包含 {len(df_reviews)} 条评论。")
 
+    if run_button:
+        st.info(f"您选择的策略是： **{strategy}**，推荐数量为：**Top {top_k}**")
 
-        # 使用一个加载动画，提升用户体验
         with st.spinner('系统正在进行情感分析和推荐计算，请稍候...'):
-            # 调用你的核心处理流程！
-            # 【注意】你需要确保run_pipeline函数能够正确处理df_reviews
-            # 并且你的 build_profiles 函数能够工作
-            # 为了演示，我们先假设一个可以工作的 build_profiles
-            # 在实际使用时，请替换成你自己的完整 pipeline
+            try:
+                # <<< 修复: 接收 run_pipeline 返回的两个值 >>>
+                recommendations, df_with_predictions = run_pipeline(df_reviews.copy(), strategy, top_k=top_k)
 
-            # 临时的 build_profiles 模拟
-            def build_profiles_mock(df):
-                # 假设 df 有 'ProductID' 和 'Sentiment' (1=positive, -1=negative)
-                # 这里你需要替换成你论文中真实的聚合逻辑
-                profiles = df.groupby('ProductID')['Sentiment'].agg(['count', 'sum']).reset_index()
-                profiles.rename(columns={'count': 'ReviewCount', 'sum': 'SentimentScore'}, inplace=True)
-                profiles['PositiveCount'] = df[df['Sentiment'] == 1].groupby('ProductID').size().reindex(
-                    profiles['ProductID']).fillna(0)
-                profiles['NegativeCount'] = df[df['Sentiment'] == -1].groupby('ProductID').size().reindex(
-                    profiles['ProductID']).fillna(0)
-                profiles['PositiveRatio'] = profiles['PositiveCount'] / profiles['ReviewCount']
-                profiles['NegativeRatio'] = profiles['NegativeCount'] / profiles['ReviewCount']
-                return profiles
+                st.success("🎉 推荐结果生成完毕！")
+
+                # --- 结果展示区 ---
+                st.subheader("🏆 商品推荐列表")
+
+                if recommendations is not None and not recommendations.empty:
+                    st.dataframe(recommendations)
 
 
+                    csv_to_download = convert_df_to_csv(recommendations)
+                    st.download_button(
+                        label="📥 下载推荐结果为 CSV",
+                        data=csv_to_download,
+                        file_name=f"recommendations_{strategy}_top{top_k}.csv",
+                        mime="text/csv",
+                    )
 
-            recommendations = run_pipeline(df_reviews, strategy)
+                    # --- 可视化区 ---
+                    st.subheader("📊 数据洞察与可视化")
 
-            # 我们用模拟函数来演示
-            # 先模拟一个Sentiment列
-            import numpy as np
+                    col1, col2 = st.columns(2)
 
-            #df_reviews['Sentiment'] = np.random.choice([1, -1, 0], size=len(df_reviews), p=[0.7, 0.2, 0.1])
-            #profiles_df = build_profiles_mock(df_reviews)
-            #recommendations = get_recommendations(profiles_df, strategy)
+                    with col1:
+                        st.write("**情感分布饼图**")
+                        # 传递带有真实预测结果的DataFrame
+                        pie_fig = create_sentiment_pie_chart(df_with_predictions)
+                        st.pyplot(pie_fig)
 
-        # app.py (修改后，更健壮)
-        # ...
-        recommendations = run_pipeline(df_reviews, strategy)
-        st.success("🎉 推荐结果生成完毕！")
+                    with col2:
+                        st.write("**评论高频词云**")
+                        # 传递带有真实预测结果的DataFrame
+                        wc_fig = create_word_cloud(df_with_predictions)
+                        if wc_fig:
+                            st.pyplot(wc_fig)
 
-        # <<< 核心修复：在展示结果前，先检查一下是否有结果 >>>
-        if recommendations is not None and not recommendations.empty:
-            st.subheader("🏆 Top-10 商品推荐列表")
-            st.dataframe(recommendations)
+                else:
+                    st.warning("🤔 根据您选择的策略和上传的数据，未能筛选出合适的推荐商品。")
 
-            st.subheader("📊 推荐结果可视化")
-
-            # 将商品ID转换为字符串，以便绘图
-            # 确保 'ProductID' 列存在
-            if 'ProductID' in recommendations.columns:
-                recommendations['ProductID'] = recommendations['ProductID'].astype(str)
-
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    st.write("**好评率 (Positive Ratio)**")
-                    st.bar_chart(recommendations.set_index('ProductID')['positive_ratio'])
-
-                with col2:
-                    st.write("**总评论数 (Review Count)**")
-                    st.bar_chart(recommendations.set_index('ProductID')['review_count'])
-            else:
-                st.warning("推荐结果中未找到 'ProductID' 列，无法进行可视化。")
-
-        else:
-            # 如果没有推荐结果，就显示友好提示
-            st.warning("🤔 根据您选择的策略和上传的数据，未能筛选出合适的推荐商品。")
-    except Exception as e:
-        st.error(f"处理文件时发生错误: {e}")
-        st.warning("请确保上传的CSV文件包含 'ProductID' 列。")
+            except FileNotFoundError as e:
+                st.error(f"处理文件时发生错误: {e}")
+                st.info(
+                    "提示：如果您是首次运行，请确保您已经运行过一次 `recommender_system.py` 中的 `train_and_save_model()` 函数来生成模型文件。")
+            except Exception as e:
+                st.error(f"处理文件时发生错误: {e}")
 
 elif run_button:
-    st.warning("请先上传一个评论数据文件！")
+    st.warning("⚠️ 请先上传一个评论数据文件！")
